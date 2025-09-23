@@ -372,6 +372,7 @@ def analyse_tweets(state: AnalyseUserState) -> AnalyseUserState:
     """Analyse users"""
     print(f"{Fore.RED}Analysing tweets for {state['user_screen_name']}{Style.RESET_ALL}")
     # Starting fresh analysis
+    # TODO: Use bullet points for the summary and keep it concise
     system_prompt = f"""
     You are a senior investment research analyst conducting market impact assessment for {state["target_name"]}.
     ANALYSIS PERIOD: Last {state["research_period"]}
@@ -410,19 +411,6 @@ from transformers import pipeline
 roberta_model_path = "cardiffnlp/twitter-roberta-base-sentiment-latest"
 roberta_model = pipeline("sentiment-analysis", model=roberta_model_path, tokenizer=roberta_model_path)
 
-def stringify_tweet(tweet: Tweet):
-    full_tweet = []
-    cleaned_tweet_text = clean_tweet(tweet["text"])
-    if cleaned_tweet_text: 
-        full_tweet.append(cleaned_tweet_text)
-    if tweet["post_image_description"]:
-        full_tweet.append(tweet["post_image_description"])
-    if tweet["post_video_description"]:
-        full_tweet.append(tweet["post_video_description"])
-    
-    if tweet["quoted_tweet"]:
-        full_tweet+= [stringify_tweet(tweet["quoted_tweet"])]
-    return "\n".join(full_tweet)
 
 def analyse_comments(state: AnalyseUserState) -> AnalyseUserState:
     """Analyse comments"""

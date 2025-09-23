@@ -35,6 +35,21 @@ class Tweet(TypedDict):
     quoted_tweet: Optional["Tweet"]
     retweeted_tweet: Optional["Tweet"]
 
+def stringify_tweet(tweet: Tweet):
+    full_tweet = []
+    cleaned_tweet_text = clean_tweet(tweet["text"])
+    if cleaned_tweet_text: 
+        full_tweet.append(cleaned_tweet_text)
+    if tweet["post_image_description"]:
+        full_tweet.append(tweet["post_image_description"])
+    if tweet["post_video_description"]:
+        full_tweet.append(tweet["post_video_description"])
+    
+    if tweet["quoted_tweet"]:
+        full_tweet+= [stringify_tweet(tweet["quoted_tweet"])]
+    return "\n".join(full_tweet)
+
+
 def load_secrets():
     "Load Twitter headers and cookies"
     with open(Path(__file__).parent / "../secrets.json", "r") as f:
@@ -56,10 +71,14 @@ def create_client_transaction(client, headers):
     return x_client_transaction.ClientTransaction(home_page_response=home_page_response, ondemand_file_response=ondemand_file)
 
 def clean_tweet(t):
-    if t[0] == '@':
-        t = t[t.index(' ')+1:]
-    t = re.sub(r"http\S+", "", t)      # remove URLs
+    t = re.sub(r"http\S+", "", t)  
     t = re.sub(r"\s+", " ", t).strip()
+    if t.startswith('@'):
+        parts = t.split(" ", 1)
+        if len(parts) > 1:
+            return parts[1]
+        else:
+            return t
     return t
 
 DELIM = "|"
