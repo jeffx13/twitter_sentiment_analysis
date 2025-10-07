@@ -1,80 +1,29 @@
-# Twitter Sentiment Analysis for Investment Research
+# Social Market Sentiment (LangGraph + GPT-4)
 
-A powerful AI-driven tool that analyzes Twitter sentiment and social media engagement to provide investment insights for stocks and companies. This tool uses LangGraph workflows to systematically collect, analyze, and synthesize Twitter data from key influencers, company accounts, and market participants.
+AI agent that scrapes X/Twitter, analyzes sentiment with an ensemble of RoBERTa + VADER, and produces an investor-ready report on a target company’s latest activity and market sentiment.
 
-THIS PROJECT IS UNDER WORKING PROGRESS SO EXPECT BUGS AND OTHER UNFORESEEN PROBLEMS. RUN AT YOUR OWN RISK.
+Note: Work in progress. Use at your own risk.
 
-## Features
+## Highlights
 
-- **Intelligent Target Detection**: Automatically identifies and validates company targets for analysis
-- **Multi-Account Analysis**: Discovers and analyzes relevant Twitter accounts including:
-  - Official company accounts
-  - C-suite executives and key personnel
-  - Industry analysts and journalists
-  - Regulatory bodies (when relevant)
-- **Comprehensive Tweet Analysis**: Collects and analyzes tweets with configurable parameters:
-  - Minimum number of accounts to analyze (default: 5)
-  - Minimum tweets per account (default: 50-100)
-  - Configurable time periods (default: last month)
-- **Advanced Sentiment Analysis**: Uses GPT-4 models to provide:
-  - Market impact assessment
-  - Sentiment quantification
-  - Risk factor identification
-  - Engagement pattern analysis
-- **Rate Limit Management**: Intelligent backoff strategies and error handling
-- **Structured Reporting**: Generates comprehensive investment-grade reports
+- **LangGraph workflow**: multi-stage pipeline (discover → scrape → clean → infer → ensemble → weight → report)
+- **Ensemble sentiment**: RoBERTa (CardiffNLP) + VADER with disagreement-aware weighting
+- **Scale**: processes 1,000+ tweets/comments per run with rate-limit aware retries
+- **Outputs**: concise report with themes, sentiment trends, risks, and high-impact posts
 
-## Prerequisites
+## Quick start
 
-- Python 3.8+
-- OpenAI API key
-- Twitter headers and cookies
-- Required Python packages (see Installation)
+Prereqs: Python 3.8+, OpenAI API key, X/Twitter headers/cookies.
 
-## Installation
-
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd <repository-name>
-```
-
-2. Install required dependencies:
 ```bash
 pip install -r requirements.txt
-```
-
-3. Set up environment variables:
-Create a `.env` file in the root directory:
-```env
-OPENAI_API_KEY=your_openai_api_key_here
-# Add Twitter API credentials as needed
-```
-
-4. Ensure you have the required `twitter.py` module with the following functions:
-   - `search_people(query, cursor)`
-   - `get_user_tweets(user_id, minimum_tweets, period, cursor)`
-   - `get_comments(tweet_id, minimum)`
-   - `users_to_table(users, include_header)`
-   - `tweets_to_json(tweets)`
-
-## Usage
-
-### Basic Usage
-
-Run the main script:
-```bash
+echo OPENAI_API_KEY=your_key_here > .env
 python main.py
 ```
 
-The tool will interactively guide you through:
-1. **Target Selection**: Specify the company/stock you want to analyze
-2. **Parameter Configuration**: Set analysis scope and requirements
-3. **Automated Analysis**: The system will automatically discover and analyze relevant accounts
+You’ll be prompted for a target (company/stock) and analysis scope; the agent discovers relevant accounts, collects recent tweets/comments, and generates a report.
 
-### Programmatic Usage
-
-You can also use the tool programmatically by providing an input state:
+## Programmatic usage
 
 ```python
 from main import app
@@ -85,76 +34,31 @@ input_state = {
     "minimum_tweets_to_collect": 100,
     "minimum_accounts_to_analyse": 5,
     "research_period": "month=1",
-    "llms": {
-        "fast": ChatOpenAI(model_name="gpt-4o-mini", temperature=0),
-        "detailed": ChatOpenAI(model_name="gpt-4o", temperature=0)
-    }
 }
 
 for chunk in app.stream(input_state, stream_mode="updates", config={"recursion_limit": 100}):
-    # Process results
     pass
 ```
 
-## Configuration Options
+## Configuration
 
-### Analysis Parameters
+- **target_name**: company or ticker to analyze
+- **research_requirements**: guidance for the report
+- **minimum_accounts_to_analyse**: default 5
+- **minimum_tweets_to_collect**: default 50 per account
+- **research_period**: e.g., `month=1`, `days=14`
 
-- **target_name**: Company or stock symbol to analyze
-- **research_requirements**: Specific focus areas or constraints
-- **minimum_accounts_to_analyse**: Number of accounts to analyze (default: 5)
-- **minimum_tweets_to_collect**: Tweets per account (default: 50)
-- **research_period**: Time frame for analysis (default: "month=1")
+## What you get
 
-### LLM Configuration
+- Themes and catalysts, sentiment trend, risks
+- Ranked influential tweets with sentiment and engagement
+- Weighted, quantitative sentiment summary
 
-The tool uses two LLM configurations:
-- **fast**: GPT-4o-mini for quick operations (query generation, user selection)
-- **detailed**: GPT-4o for comprehensive analysis (tweet analysis, report generation)
+## Reliability notes
 
-## Workflow Architecture
-
-The tool uses a LangGraph-based workflow with the following nodes:
-
-1. **Context Setting**: Interactive target identification and parameter configuration
-2. **User Reconnaissance**: 
-   - Query generation for finding relevant accounts
-   - Account discovery and selection
-3. **User Analysis**: 
-   - Tweet collection and analysis
-   - Comment analysis for high-engagement tweets
-   - Report generation
-4. **Timeout Management**: Intelligent rate limit handling
-
-## Output
-
-The tool generates comprehensive reports including:
-
-- **Themes & Catalysts**: Summary of key topics, products, services, and market-moving events
-- **Engagement & Timing Analysis**: Most engaging content and timing indicators
-- **Risk Assessment**: Identified risk factors and negative sentiment
-- **Top Influential Tweets**: Ranked list of high-impact tweets with sentiment analysis
-- **Quantified Insights**: Actionable metrics for investment decisions
-
-## Error Handling
-
-- **Rate Limit Management**: Automatic backoff with progressive timeouts
-- **API Error Recovery**: Intelligent retry mechanisms
-- **Data Validation**: Robust input validation and error reporting
-
-## Visualization
-
-The tool automatically generates a workflow diagram (`workflow.png`) showing the complete analysis pipeline using Mermaid.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
+- Backoff and retry for scraping limits and transient errors
+- Basic input validation; expect occasional edge cases while WIP
 
 ## Disclaimer
 
-This tool is for research and educational purposes only. Investment decisions should not be made solely based on social media sentiment analysis. Always conduct thorough due diligence and consult with financial professionals before making investment decisions.
+For research/education only; not investment advice.
