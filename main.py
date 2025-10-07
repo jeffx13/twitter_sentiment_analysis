@@ -15,6 +15,9 @@ import random
 from twitter import *
 import json
 import pandas as pd
+from sentiment_analysis import calculate_overall_sentiment
+
+
 
 os.system('cls')
 
@@ -27,7 +30,6 @@ class ContextSettingResult(BaseModel):
     minimum_tweets_to_collect: int = Field(description="The minimum number of tweets to collect. If user does not specify, default to 50", default=50)
     research_period: str = Field(description="The past period of time to research the target. If user does not specify, default to 1 month", default="month=1")
     follow_up_question: Optional[str] = Field(description="Follow-up question to ask if the user has not provided a clear target stock/company/person to research", default="")
-
 
 class OverallState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
@@ -53,10 +55,7 @@ class OverallState(TypedDict):
     tweets_filtered_out: Annotated[Set[str], operator.or_]        # list of tweet ids filtered out
     accounts_to_analyse: Set[Tuple[int, str]]       # list of account ids collected and pending analysis
     
-    
-    
-
-
+# Context Setting
 class InputState(TypedDict):
     target_name: Optional[str]
     research_requirements: Optional[str]
@@ -64,7 +63,6 @@ class InputState(TypedDict):
     minimum_accounts_to_analyse: int
     minimum_tweets_to_collect: int
     llms: Optional[List[ChatOpenAI]]
-
 
 def context_setting(input_state: InputState) -> OverallState:
     """
@@ -202,7 +200,8 @@ def route_after_user_recon_query(state: OverallState) -> str:
     if len(state["search_results"]) > 0:
         return "user_recon_select"
     return "user_recon_query" # no search results from any of the queries, so we need to generate new queries # TODO could also due to rate limit
-    
+
+# User Selection
 class UserSelection(BaseModel):
     chosen_handles: List[str] = Field(description="Twitter screen_names to analyze (e.g., elonmusk)")
     rationale: str = Field(description="Brief reasons for each; 1-2 lines total")
@@ -286,8 +285,8 @@ def analyse_users(state: OverallState) -> OverallState:
     
     results = analyse_user_app.batch(items, config={'max_concurrency': 2}) # 2 is the max concurrency to prevent rate limit
     for result in results:
-        print(f"{Fore.GREEN}{result['user_screen_name']}: {result['tweets_summary']}{Style.RESET_ALL}")
-    user_reports = {result['user_screen_name']: result['tweets_summary'] for result in results} 
+        print(f"{Fore.GREEN}{result['user_screen_name']}: {result['tweet_sentiment']}{Style.RESET_ALL}")
+    user_reports = {result['user_screen_name']: result['tweet_sentiment'] for result in results} 
     
     # Generate an overall report based on the user reports
     system_prompt = f"""
@@ -308,9 +307,9 @@ def analyse_users(state: OverallState) -> OverallState:
         f.write(f"ANALYSIS PERIOD: Last {state['research_period']}\n")
         f.write(f"{f'SPECIFIC REQUIREMENTS: {state['research_requirements']}' if state['research_requirements'] else ''}\n")
         f.write("# USER REPORTS\n")
-        for user_screen_name, tweets_summary in user_reports.items():
+        for user_screen_name, tweet_sentiment in user_reports.items():
             f.write(f"## {user_screen_name}\n")
-            f.write(tweets_summary)
+            f.write(json.dumps(tweet_sentiment))
             f.write("\n")
         f.write("# FINAL EVALUATION\n")
         f.write(response.content)
@@ -353,32 +352,24 @@ class AnalyseUserState(TypedDict):
     research_period: str
     research_requirements: str
     minimum_tweets_to_collect: int
-    minimum_accounts_to_analyse: int
 
     messages: Annotated[Sequence[BaseMessage], add_messages]
     user_id: int
     user_screen_name: str
-    tweets_summary: str
+
+    tweet_sentiment: List[Dict[str, Any]] # [{ 'tweet_id': tweet_id, 'sentiment_score': sentiment_score, 'summary': comment_summary }]
     top_tweets: List[str]
-    comments_summary: Dict[str, Tuple[float, str]] # tweet_id: (sentiment_score, summary)
     llm: ChatOpenAI
+
     node_before_timeout: str
 
 class AnalyseTweetsResult(BaseModel):
     tweets_summary: str = Field(description="Summary of the tweets offering insights into the company and the market")
-    top_tweets: List[str] = Field(description="List of the top 10 tweets by their tweet_id")
+    top_tweets: List[int] = Field(description="The tweet_ids of the top 10 tweets in the json")
 
 def analyse_tweets(state: AnalyseUserState) -> AnalyseUserState:
     """Analyse users"""
     print(f"{Fore.RED}Analysing tweets for {state['user_screen_name']}{Style.RESET_ALL}")
-    # Starting fresh analysis
-    # TODO: Use bullet points for the summary and keep it concise
-    system_prompt = f"""
-    You are a senior investment research analyst conducting market impact assessment for {state["target_name"]}.
-    ANALYSIS PERIOD: Last {state["research_period"]}
-    {f"SPECIFIC REQUIREMENTS: {state['research_requirements']}" if state["research_requirements"] else ""}
-    You are a senior investment research analyst. Task: Write a Market Impact Report (≥200 words but no more than 400 words) based on the provided tweets from the last month. Include 3 sections: Themes & Catalysts – Summarize tweet content (news, products, services, milestones). Explicitly name products/services. Identify market catalysts (events, announcements, trends that could move price). Engagement, Timing & Risks – Analyze which topics drove the most engagement/viral potential. Highlight timing indicators (urgency, near-term vs. long-term impact). Note risk factors (negative issues, governance, funding, delays). Top 10 Influential Tweets – List top 10 tweets by tweet_id with highest market-moving potential. For each: give sentiment (positive/negative/neutral, quantified if possible) + key engagement metrics. Focus on actionable insights affecting stock price, trading volume, investor behavior.""".strip()
-    
     update = {
         "tweets_summary": "",
         "top_tweets": [],
@@ -392,11 +383,16 @@ def analyse_tweets(state: AnalyseUserState) -> AnalyseUserState:
             "node_before_timeout": "analyse_tweets",
             "timeout_duration": 60
         }
-
     
-    
-    if not latest_tweets:
+    if not latest_tweets: 
         return update
+
+    system_prompt = f"""
+    You are a senior investment research analyst conducting market impact assessment for {state["target_name"]}.
+    ANALYSIS PERIOD: Last {state["research_period"]}
+    {f"SPECIFIC REQUIREMENTS: {state['research_requirements']}" if state["research_requirements"] else ""}
+    Output Format: concise bullet points.
+    Write a Market Impact Report (≥200 words but no more than 400 words) based on the provided tweets from the last month. Include 3 sections: Themes & Catalysts – Summarize tweet content (news, products, services, milestones). Explicitly name products/services. Identify market catalysts (events, announcements, trends that could move price). Engagement, Timing & Risks – Analyze which topics drove the most engagement/viral potential. Highlight timing indicators (urgency, near-term vs. long-term impact). Note risk factors (negative issues, governance, funding, delays). Top 10 Influential Tweets – List top 10 tweets by tweet_id with highest market-moving potential. For each: give sentiment (positive/negative/neutral, quantified if possible) + key engagement metrics. Focus on actionable insights affecting stock price, trading volume, investor behavior.""".strip()
     
     messages = [
         SystemMessage(content=system_prompt),
@@ -405,86 +401,61 @@ def analyse_tweets(state: AnalyseUserState) -> AnalyseUserState:
     response = state["llm"].with_structured_output(AnalyseTweetsResult).invoke(messages)
     update["tweets_summary"] = response.tweets_summary
     update["top_tweets"] = response.top_tweets
+    print(f"Selected {update['top_tweets']} to analyse for {state['user_screen_name']}")
     return update
-
-from transformers import pipeline
-roberta_model_path = "cardiffnlp/twitter-roberta-base-sentiment-latest"
-roberta_model = pipeline("sentiment-analysis", model=roberta_model_path, tokenizer=roberta_model_path)
 
 
 def analyse_comments(state: AnalyseUserState) -> AnalyseUserState:
     """Analyse comments"""
-    # system_prompt = f"""
-    #     For each high-engagement tweet, use get_comments tool to extract top 100 comments. Input the tweet_id of the tweet.
-    #     Analyze comment sentiment patterns, themes, and market-moving insights
-    #     Identify bullish vs bearish sentiment ratios
-    #     PHASE 4: INVESTMENT-GRADE ANALYSIS SYNTHESIS
-    #     Synthesize findings into actionable investment insights
-    #     Quantify sentiment trends with specific metrics
-    #     Identify key themes, catalysts, and risk factors
-    #     Provide concrete examples with engagement data
-    #     Assess potential market impact and timing
-    # """
-    labels = {
-        'negative': -1,
-        'neutral': 0,
-        'positive': 1
-    }
+    
     update = {
-        "comments_summary": {}
+        "tweet_sentiment": []
     }
+    system_prompt = f"""
+    You are a senior investment research analyst conducting sentiment analysis for {state["target_name"]}.
+    You will be provided comments for a tweet. Your job is summarise the comments and provide a sentiment score for the tweet.
+    The first comment is the tweet itself. You should exclude it from the sentiment analysis but use it for context.
+    The sentiment score should be a number between 0 and 1. 0 is the most negative and 1 is the most positive.
+    The summary should be a few sentences that capture the main points of the comments.
+    The sentiment score should be calculated using the comments.
+    """
     for tweet_id in state["top_tweets"][:5]:
+        print(f"{Fore.CYAN}Analysing comments for {tweet_id}{Style.RESET_ALL}")
         comments = get_comments(tweet_id, minimum_comments=100)[0]
-        cleaned_comments = []
-        for comment in comments:
-            cleaned_comment = stringify_tweet(comment)
-            if not cleaned_comment: continue
-            cleaned_comments.append(cleaned_comment)
-
-        sentiments = roberta_model(cleaned_comments)
-        sentiment_score = sum([sentiment["score"] * labels[sentiment["label"]] for sentiment in sentiments]) / len(sentiments)
-        update["comments_summary"][tweet_id] = (sentiment_score, "") # TODO: Add summary here
+        if len(comments) <= 1: continue
+        print(f"{Fore.CYAN}Found {len(comments)} comments for {tweet_id}{Style.RESET_ALL}")
+    
+        cleaned_comments, sentiment_score = calculate_overall_sentiment(comments[1:]) # exclude the tweet itself
+        messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=f"{json.dumps(cleaned_comments)}")
+        ]
+        response = state["llm"].invoke(messages)
+        sentiment = {
+            'tweet_id': tweet_id,
+            'sentiment_score': sentiment_score,
+            'summary': response.content
+        }
+        update["tweet_sentiment"].append(sentiment)
         print(f"{Fore.CYAN}Tweet {tweet_id}: {sentiment_score}{Style.RESET_ALL}")
 
-        
+    update["messages"] = [AIMessage(content=f"{json.dumps(update['tweet_sentiment'])}")] # debug only lol, not a react agent
+
     return update
-
-def user_analysis_tools(state: AnalyseUserState) -> AnalyseUserState:
-    """Analyse one user tools"""
-    ai_msg = next(m for m in reversed(state["messages"]) if isinstance(m, AIMessage))
-    tool_msgs = []
-    for tool_call in ai_msg.tool_calls:
-        call = tool_call
-        tool_name = tool_call["name"]
-        args = tool_call["args"]
-        print(f"{Fore.CYAN}Tool call: {tool_name} with args: {args}{Style.RESET_ALL}")
-        content = ''
-        if tool_name == "get_comments":
-            content = get_comments_str.run(args)
-
-        tool_msg = ToolMessage(
-            content=content, name=tool_name, tool_call_id=call["id"]
-        )
-        tool_msgs.append(tool_msg)
-    return {
-        "messages": state["messages"] + tool_msgs
-    }
 
 def route_after_analyse_tweets(state: AnalyseUserState) -> str:
     if state["node_before_timeout"]:
         return "timeout_node"
 
-    if state["top_tweets"]:
+    if state["top_tweets"] and len(state["top_tweets"]) > 0:
         return "analyse_comments"
     return "end"
-
 
 
 analyse_user_workflow = StateGraph(AnalyseUserState)
 analyse_user_workflow.add_node(timeout_node)
 analyse_user_workflow.add_node(analyse_tweets)
 analyse_user_workflow.add_node(analyse_comments)
-analyse_user_workflow.add_node(user_analysis_tools)
 analyse_user_workflow.add_edge(START, "analyse_tweets")
 analyse_user_workflow.add_conditional_edges("analyse_tweets", route_after_analyse_tweets, {
     "analyse_comments": "analyse_comments",
@@ -534,16 +505,17 @@ app = main_workflow.compile()
 
 # print(app.get_graph().draw_ascii())
 import mermaid as md; from mermaid.graph import Graph;render = md.Mermaid(app.get_graph().draw_mermaid(curve_style=CurveStyle.NATURAL)).to_png("workflow.png")
-
+from langchain_ollama import ChatOllama
 # exit() 
 
 
 load_dotenv()
 llms = {
     "fast": ChatOpenAI(model_name="gpt-4o-mini", temperature=0),
-    # "detailed": ChatOpenAI(model_name="gpt-4o", temperature=0),
-    "detailed": ChatOpenAI(model_name="gpt-4o-mini", temperature=0), # 4o costs too much, im poor...
+    "detailed": ChatOpenAI(model_name="gpt-4o", temperature=0),
 }
+llms["detailed"]=ChatOpenAI(model_name="gpt-4o-mini", temperature=0) # 4o costs too much, im poor...
+# llms["fast"] = llms["detailed"] = ChatOllama(model="llama3.1:8b", temperature=0)
 
 input_state = {
     "target_name": "Rocket Lab",

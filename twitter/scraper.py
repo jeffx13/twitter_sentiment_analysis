@@ -4,7 +4,6 @@ from typing import Optional, Union, List, Dict, Any, Tuple
 from urllib.parse import urlencode 
 from urllib.parse import urlparse
 import datetime
-from httpx import Cookies
 import rnet
 from .utils import *
 import os, json
@@ -62,7 +61,7 @@ def parse_tweet(result: dict) -> Optional[Tweet]:
 
     return tweet
 
-def parse_entries(entries: list[dict]) -> Tuple[List[Tweet], str]:
+def parse_entries(entries: list[dict], filter_retweets: bool = True) -> Tuple[List[Tweet], str]:
     if len(entries) == 2 and (entries[0]['entryId'].startswith('cursor') and entries[-1]['entryId'].startswith('cursor')):
         return [], ""
     elif not entries[-1]['entryId'].startswith('cursor'): # cursor-showmorethreads or cursor-bottom 
@@ -70,7 +69,7 @@ def parse_entries(entries: list[dict]) -> Tuple[List[Tweet], str]:
     
     cursor_bottom = entries[-1]['content']['value']
     tweets = []
-    write_to_file(entries)
+    
     for entry in entries[:-1]:
         entry_id = entry['entryId']
         if entry_id.startswith('profile-conversation'):
@@ -86,13 +85,14 @@ def parse_entries(entries: list[dict]) -> Tuple[List[Tweet], str]:
                 if not tweet: continue
                 tweets.append(tweet)
             continue
-        elif entry_id[:2] not in ['tw', 'co']:  # tweet-1968010132945846663 or conversationthread-1968013218296762
+        elif entry_id[:2] not in ['tw', 'co']:  # only consider tweet-1968010132945846663 or conversationthread-1968013218296762
             # tweet not promoted-tweet, who-to-follow, cursor-top, cursor-bottom
             continue
         
         content = entry['content']
         entry_type = content['entryType']
         if entry_type == 'TimelineTimelineModule':
+            if 'promoted' in content['items'][0]['entryId']: continue
             content = content['items'][0]['item']
         elif entry_type != 'TimelineTimelineItem':
             # print("Invalid entry type: "+entry_type)
@@ -107,11 +107,12 @@ def parse_entries(entries: list[dict]) -> Tuple[List[Tweet], str]:
             # print(result['__typename'])
             continue
         tweet = parse_tweet(result)
+        if filter_retweets and tweet['retweeted_tweet']: continue
         if not tweet: continue
         tweets.append(tweet)   
     return tweets, cursor_bottom
 
-def get_user_tweets(user_id: Union[str, int], minimum_tweets: int = -1, period: str = "all", cursor: Optional[str] = "") -> tuple[list[Tweet], str]:
+def get_user_tweets(user_id: Union[str, int], minimum_tweets: int = -1, period: str = "all", cursor: Optional[str] = "", filter_retweets: bool = True) -> tuple[list[Tweet], str]:
     """
     Fetch tweets from a user with pagination support. Minimum tweets takes precedence over period.
     """
@@ -156,7 +157,7 @@ def get_user_tweets(user_id: Union[str, int], minimum_tweets: int = -1, period: 
             # print(f"No entries found for {user_id} {cursor}")
             break
         
-        parsed_tweets, cursor = parse_entries(entries)
+        parsed_tweets, cursor = parse_entries(entries, filter_retweets=filter_retweets)
         tweets.extend(parsed_tweets)
         
         if minimum_tweets != -1 and len(tweets) >= minimum_tweets: break
@@ -170,7 +171,7 @@ def get_user_tweets(user_id: Union[str, int], minimum_tweets: int = -1, period: 
 
     return tweets, cursor
 
-def get_comments(tweet_id: str, minimum_comments: int = 1, ranking_mode: str = "Relevance", cursor: Optional[str] = "") -> tuple[list["Tweet"], str]:
+def get_comments(tweet_id: Union[str, int], minimum_comments: int = 1, ranking_mode: str = "Relevance", cursor: Optional[str] = "") -> tuple[list["Tweet"], str]:
     """Get the comments for a tweet
     Args:
         tweet_id: The ID of the tweet to get the comments for
@@ -178,6 +179,7 @@ def get_comments(tweet_id: str, minimum_comments: int = 1, ranking_mode: str = "
     Returns:
         a json string of the comments and the cursor to get the next page of comments
     """
+    tweet_id = str(tweet_id)
     comments = []
     while True:
         params = {
